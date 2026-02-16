@@ -1,0 +1,37 @@
+# Dependencies
+node_modules/
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# Data
+data/
+*.db
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Build
+dist/
+build/
+
+# Credentials (never commit these!)
+*.json
+!package.json
+!package-lock.json
+service-account*.json
+credentials*.json
