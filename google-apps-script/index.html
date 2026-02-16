@@ -1,0 +1,281 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Sneaker Catalog</title>
+
+  <style>
+    body { font-family: -apple-system, system-ui, Arial; margin: 0; padding: 16px; background: #f5f5f5; }
+    .card { border: 1px solid #ddd; border-radius: 12px; padding: 14px; margin-bottom: 12px; background: #fff; }
+    button { padding: 12px 14px; border-radius: 10px; border: 1px solid #ccc; background: #fff; width: 100%; margin: 6px 0; font-size: 16px; cursor: pointer; }
+    button:hover { background: #f0f0f0; }
+    button.primary { background: #007AFF; color: white; border: none; }
+    button.primary:hover { background: #0066DD; }
+    input, select { width: 100%; padding: 12px; border-radius: 10px; border: 1px solid #ccc; font-size: 16px; box-sizing: border-box; }
+    .row { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+    .muted { color: #666; font-size: 13px; }
+    .ok { color: #0a7; }
+    .err { color: #b00; }
+    .big { font-size: 18px; font-weight: 600; }
+    .loader { display: inline-block; width: 16px; height: 16px; border: 2px solid #ccc; border-top-color: #007AFF; border-radius: 50%; animation: spin 0.8s linear infinite; margin-right: 8px; vertical-align: middle; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .confidence { display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 12px; margin-left: 8px; }
+    .confidence.high { background: #d4edda; color: #155724; }
+    .confidence.medium { background: #fff3cd; color: #856404; }
+    .confidence.low { background: #f8d7da; color: #721c24; }
+  </style>
+</head>
+<body>
+
+  <div class="card">
+    <div class="big">📦 Sneaker Catalog</div>
+    <div class="muted">Scan size tag → OCR extracts SKU + size → identifies sneaker → save to Google Sheets.</div>
+  </div>
+
+  <div class="card" id="statusCard">
+    <div class="row">
+      <button onclick="openSheet()">Open Sheet</button>
+      <button onclick="showSettings()">⚙️ Settings</button>
+    </div>
+    <div id="status" class="muted" style="margin-top:10px;"></div>
+  </div>
+
+  <div class="card">
+    <button class="primary" onclick="showScanner()">📷 Scan Size Tag</button>
+    <button onclick="showManual()">✏️ Add Manually</button>
+  </div>
+
+  <div class="card" id="panel"></div>
+
+<script>
+  const panel = document.getElementById("panel");
+  const statusEl = document.getElementById("status");
+
+  function setStatus(msg, cls="muted") {
+    statusEl.className = cls;
+    statusEl.innerHTML = msg;
+  }
+
+  async function getLinks() {
+    return new Promise((resolve, reject) => {
+      google.script.run
+        .withSuccessHandler(resolve)
+        .withFailureHandler(err => reject(err))
+        .getAppLinks();
+    });
+  }
+
+  async function openSheet() {
+    setStatus("Opening sheet…");
+    const links = await getLinks();
+    window.open(links.sheetUrl, "_blank");
+    setStatus(`Sheet opened. Current tab: ${links.currentMonthTab}`, "ok");
+  }
+
+  function showSettings() {
+    panel.innerHTML = `
+      <div class="big">⚙️ Settings</div>
+      <div class="muted" style="margin:8px 0 14px;">
+        Enter your Sole Resolver API URL. This is the URL where you deployed your API (e.g., on Railway or Render).
+      </div>
+      <input id="apiUrl" placeholder="https://your-app.railway.app" />
+      <button onclick="saveApiUrl()">Save API URL</button>
+      <button onclick="testConnection()">Test Connection</button>
+      <div id="settingsStatus" class="muted" style="margin-top:10px;"></div>
+    `;
+  }
+
+  function saveApiUrl() {
+    const apiUrl = document.getElementById("apiUrl").value.trim();
+    if (!apiUrl) return setSettingsStatus("Enter an API URL first.", "err");
+    
+    setSettingsStatus("Saving…");
+    google.script.run
+      .withSuccessHandler(() => setSettingsStatus("Saved! Try scanning a shoe.", "ok"))
+      .withFailureHandler(e => setSettingsStatus(String(e), "err"))
+      .setSoleResolverUrl(apiUrl);
+  }
+
+  function testConnection() {
+    setSettingsStatus('<span class="loader"></span> Testing connection…');
+    google.script.run
+      .withSuccessHandler(result => {
+        if (!result.configured) {
+          setSettingsStatus("API URL not configured yet.", "err");
+        } else if (!result.reachable) {
+          setSettingsStatus("API URL configured but not reachable. Check the URL.", "err");
+        } else {
+          setSettingsStatus("✓ Connected successfully!", "ok");
+        }
+      })
+      .withFailureHandler(e => setSettingsStatus(String(e), "err"))
+      .checkApiStatus();
+  }
+
+  function setSettingsStatus(msg, cls="muted") {
+    const el = document.getElementById("settingsStatus");
+    if (el) {
+      el.className = cls;
+      el.innerHTML = msg;
+    }
+  }
+
+  function showManual(prefill = {}) {
+    const confidenceHtml = prefill.confidence 
+      ? `<span class="confidence ${getConfidenceClass(prefill.confidence)}">${Math.round(prefill.confidence * 100)}% confidence</span>`
+      : '';
+    
+    panel.innerHTML = `
+      <div class="big">Add Sneaker ${confidenceHtml}</div>
+      <div class="muted" style="margin:8px 0 14px;">Edit if needed. You can always update in Google Sheets later.</div>
+
+      <label class="muted">Sneaker (name / colorway)</label>
+      <input id="sneaker" value="${escapeHtml(prefill.sneaker || "")}" placeholder="e.g., Nike Dunk Low Panda" />
+
+      <div class="row" style="margin-top:10px;">
+        <div>
+          <label class="muted">SKU</label>
+          <input id="sku" value="${escapeHtml(prefill.sku || "")}" placeholder="e.g., DD1391-100" />
+        </div>
+        <div>
+          <label class="muted">US Size</label>
+          <input id="usSize" value="${escapeHtml(prefill.usSize || "")}" placeholder="e.g., 10.5" />
+        </div>
+      </div>
+
+      <label class="muted" style="margin-top:10px; display:block;">Condition</label>
+      <select id="condition">
+        ${["New with box","New with no box","Used with box","Used with no box"].map(x => `
+          <option ${prefill.condition===x?"selected":""}>${x}</option>
+        `).join("")}
+      </select>
+
+      <button class="primary" onclick="saveSneaker()">💾 Save to Sheet</button>
+    `;
+  }
+
+  function getConfidenceClass(conf) {
+    if (conf >= 0.8) return 'high';
+    if (conf >= 0.5) return 'medium';
+    return 'low';
+  }
+
+  function showScanner() {
+    panel.innerHTML = `
+      <div class="big">📷 Scan Size Tag</div>
+      <div class="muted" style="margin:8px 0 14px;">
+        Take a clear photo of the inside size tag. The API will extract the SKU, size, and identify the sneaker.
+      </div>
+      <input id="photo" type="file" accept="image/*" capture="environment" />
+      <button class="primary" onclick="runScan()">🔍 Scan Image</button>
+      <div id="scanOut" class="muted" style="margin-top:10px;"></div>
+    `;
+  }
+
+  async function runScan() {
+    const file = document.getElementById("photo").files[0];
+    if (!file) return setStatus("Choose a photo first.", "err");
+    
+    setStatus('<span class="loader"></span> Processing image…', "muted");
+    document.getElementById("scanOut").innerHTML = "Uploading and analyzing…";
+
+    // Convert to base64
+    const reader = new FileReader();
+    reader.onload = async function(e) {
+      const base64 = e.target.result;
+      
+      google.script.run
+        .withSuccessHandler(result => {
+          if (!result.success) {
+            setStatus(`Scan failed: ${result.error}`, "err");
+            document.getElementById("scanOut").innerHTML = `
+              <div class="err">Error: ${result.error}</div>
+              ${result.rawText ? `<div class="muted" style="margin-top:8px;">Raw OCR text:<br><pre style="white-space:pre-wrap;font-size:11px;background:#f5f5f5;padding:8px;border-radius:4px;">${escapeHtml(result.rawText.slice(0,500))}</pre></div>` : ''}
+            `;
+            
+            // Still offer manual entry with any data we got
+            if (result.sku || result.usSize) {
+              setTimeout(() => showManual({ 
+                sku: result.sku, 
+                usSize: result.usSize 
+              }), 1500);
+            }
+            return;
+          }
+          
+          const confidenceText = result.confidence 
+            ? `Confidence: ${Math.round(result.confidence * 100)}%` 
+            : '';
+          
+          setStatus(`✓ Found: ${result.sneakerName || result.sku}. ${confidenceText}`, "ok");
+          
+          // Pre-fill manual form with results
+          showManual({
+            sneaker: result.sneakerName || "",
+            sku: result.sku || "",
+            usSize: result.usSize || "",
+            confidence: result.confidence
+          });
+        })
+        .withFailureHandler(err => {
+          setStatus(`Error: ${err}`, "err");
+          document.getElementById("scanOut").innerHTML = "Scan failed. Try manual entry.";
+        })
+        .processImageWithOcr(base64);
+    };
+    reader.readAsDataURL(file);
+  }
+
+  function saveSneaker() {
+    const sneaker = document.getElementById("sneaker").value.trim();
+    const sku = document.getElementById("sku").value.trim();
+    const usSize = document.getElementById("usSize").value.trim();
+    const condition = document.getElementById("condition").value;
+
+    if (!sneaker || !sku || !usSize) return setStatus("Sneaker, SKU, and US Size are required.", "err");
+
+    setStatus('<span class="loader"></span> Saving to Google Sheets…', "muted");
+
+    google.script.run
+      .withSuccessHandler(res => {
+        setStatus(`✓ Saved to ${res.monthTab}!`, "ok");
+        // Reset form
+        showScanner();
+      })
+      .withFailureHandler(e => setStatus(`Error: ${e}`, "err"))
+      .addSneakerRow({ sneaker, sku, usSize, condition });
+  }
+
+  function escapeHtml(s) {
+    return String(s).replace(/[&<>"']/g, m => ({
+      "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#039;"
+    }[m]));
+  }
+
+  // Initial load - check status
+  (async () => {
+    try {
+      const links = await getLinks();
+      
+      google.script.run
+        .withSuccessHandler(status => {
+          if (!status.configured) {
+            setStatus("⚠️ API not configured. Open Settings to add your Sole Resolver URL.", "err");
+          } else if (!status.reachable) {
+            setStatus("⚠️ API configured but not reachable. Check Settings.", "err");
+          } else {
+            setStatus(`Ready! Current tab: ${links.currentMonthTab}`, "ok");
+          }
+        })
+        .withFailureHandler(() => {
+          setStatus(`Current tab: ${links.currentMonthTab}`, "muted");
+        })
+        .checkApiStatus();
+    } catch (e) {
+      setStatus("Open Settings to configure your API.", "muted");
+    }
+  })();
+</script>
+</body>
+</html>
