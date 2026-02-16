@@ -1,6 +1,7 @@
 import Database from 'better-sqlite3';
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
+import fs from 'fs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const DB_PATH = join(__dirname, '../../data/cache.db');
@@ -12,7 +13,6 @@ let db = null;
  */
 export function initCache() {
   // Ensure data directory exists
-  const fs = await import('fs');
   const dataDir = join(__dirname, '../../data');
   if (!fs.existsSync(dataDir)) {
     fs.mkdirSync(dataDir, { recursive: true });
