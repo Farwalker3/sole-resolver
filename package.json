@@ -22,7 +22,7 @@
     "sneaks-api": "^1.2.3"
   },
   "engines": {
-    "node": ">=18.0.0"
+    "node": "20.x"
   },
   "overrides": {
     "undici": "^5.28.4"
