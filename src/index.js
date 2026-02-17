@@ -11,11 +11,7 @@ import { initCache } from './db/cache.js';
 dotenv.config();
 
 const fastify = Fastify({
-  logger: {
-    transport: process.env.NODE_ENV === 'development' 
-      ? { target: 'pino-pretty', options: { colorize: true } }
-      : undefined
-  }
+  logger: true  // Simple logging, no pino-pretty
 });
 
 // Plugins
@@ -25,7 +21,7 @@ await fastify.register(rateLimit, {
   timeWindow: '1 minute'
 });
 
-// Initialize database cache
+// Initialize cache
 initCache();
 
 // Routes
@@ -47,7 +43,7 @@ const start = async () => {
   try {
     const port = process.env.PORT || 3000;
     await fastify.listen({ port, host: '0.0.0.0' });
-    fastify.log.info(`Sole Resolver API running on port ${port}`);
+    console.log(`Sole Resolver API running on port ${port}`);
   } catch (err) {
     fastify.log.error(err);
     process.exit(1);
