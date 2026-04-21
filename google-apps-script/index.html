@@ -121,12 +121,30 @@
     }
   }
 
-  function showManual(prefill = {}) {
+  async function copyTextToClipboard(text) {
+    try {
+      await navigator.clipboard.writeText(text);
+      setStatus("Copied OCR text to clipboard.", "ok");
+    } catch (err) {
+      window.prompt("Copy OCR text:", text);
+    }
+  }
+
+  function showManual(prefill = {}, scanText = "") {
     const confidenceHtml = prefill.confidence 
       ? `<span class="confidence ${getConfidenceClass(prefill.confidence)}">${Math.round(prefill.confidence * 100)}% confidence</span>`
       : '';
+
+    const scanPreviewHtml = scanText
+      ? '<div class="card" style="margin-bottom:12px; background:#f9fafb;">' +
+        '<div class="big">OCR Result</div>' +
+        '<button type="button" onclick="copyTextToClipboard(' + JSON.stringify(scanText) + ' )">📋 Copy text</button>' +
+        '<pre style="white-space:pre-wrap; font-size:12px; background:#fff; padding:10px; border-radius:8px; border:1px solid #e5e5e5; margin-top:8px;">' + escapeHtml(scanText) + '</pre>' +
+        '</div>'
+      : '';
     
     panel.innerHTML = `
+      ${scanPreviewHtml}
       <div class="big">Add Sneaker ${confidenceHtml}</div>
       <div class="muted" style="margin:8px 0 14px;">Edit if needed. You can always update in Google Sheets later.</div>
 
@@ -195,11 +213,11 @@
             `;
             
             // Still offer manual entry with any data we got
-            if (result.sku || result.usSize) {
+            if (result.sku || result.usSize || result.rawText) {
               setTimeout(() => showManual({ 
                 sku: result.sku, 
                 usSize: result.usSize 
-              }), 1500);
+              }, result.rawText || ""), 1500);
             }
             return;
           }
@@ -207,8 +225,9 @@
           const confidenceText = result.confidence 
             ? `Confidence: ${Math.round(result.confidence * 100)}%` 
             : '';
+          const displayName = result.sneakerName || result.sku || "OCR text";
           
-          setStatus(`✓ Found: ${result.sneakerName || result.sku}. ${confidenceText}`, "ok");
+          setStatus(`✓ Found: ${displayName}${confidenceText ? ' . ' + confidenceText : ''}`, "ok");
           
           // Pre-fill manual form with results
           showManual({
@@ -216,7 +235,7 @@
             sku: result.sku || "",
             usSize: result.usSize || "",
             confidence: result.confidence
-          });
+          }, result.copyText || result.displayText || result.rawText || "");
         })
         .withFailureHandler(err => {
           setStatus(`Error: ${err}`, "err");
