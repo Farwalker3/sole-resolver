@@ -16,16 +16,14 @@ let cachedCredentialsSource = null;
 let cachedAccessToken = null;
 
 function normalizeText(text) {
-  return String(text || '')
-    .replace(/
-/g, '
-')
-    .replace(/[ 	]+$/gm, '')
-    .replace(/
-{3,}/g, '
-
-')
-    .trim();
+  const carriageReturnLineFeed = String.fromCharCode(13, 10);
+  const lineFeed = String.fromCharCode(10);
+  let normalized = String(text || '');
+  normalized = normalized.split(carriageReturnLineFeed).join(lineFeed);
+  while (normalized.includes(lineFeed + lineFeed + lineFeed)) {
+    normalized = normalized.split(lineFeed + lineFeed + lineFeed).join(lineFeed + lineFeed);
+  }
+  return normalized.trim();
 }
 
 function parseCredentialsFromEnv() {
@@ -80,12 +78,24 @@ function normalizeImageInput(imageInput) {
     throw new Error('Image data is required');
   }
 
-  const mimeMatch = imageInput.match(/^data:(image/[a-zA-Z0-9.+-]+);base64,/);
-  const base64Data = imageInput.replace(/^data:image/w+;base64,/, '');
+  let mimeType = 'image/jpeg';
+  let base64Data = imageInput;
+
+  if (imageInput.startsWith('data:')) {
+    const commaIndex = imageInput.indexOf(',');
+    if (commaIndex !== -1) {
+      const meta = imageInput.slice(5, commaIndex);
+      const semicolonIndex = meta.indexOf(';');
+      if (semicolonIndex !== -1) {
+        mimeType = meta.slice(0, semicolonIndex) || mimeType;
+      }
+      base64Data = imageInput.slice(commaIndex + 1);
+    }
+  }
 
   return {
     buffer: Buffer.from(base64Data, 'base64'),
-    mimeType: mimeMatch ? mimeMatch[1] : 'image/jpeg'
+    mimeType
   };
 }
 
