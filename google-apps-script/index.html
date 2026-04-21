@@ -136,11 +136,11 @@
       : '';
 
     const scanPreviewHtml = scanText
-      ? '<div class="card" style="margin-bottom:12px; background:#f9fafb;">' +
-        '<div class="big">OCR Result</div>' +
-        '<button type="button" onclick="copyTextToClipboard(' + JSON.stringify(scanText) + ' )">📋 Copy text</button>' +
-        '<pre style="white-space:pre-wrap; font-size:12px; background:#fff; padding:10px; border-radius:8px; border:1px solid #e5e5e5; margin-top:8px;">' + escapeHtml(scanText) + '</pre>' +
-        '</div>'
+      ? "<div class='card' style='margin-bottom:12px; background:#f9fafb;'>" +
+        "<div class='big'>OCR Result</div>" +
+        "<button type='button' onclick='copyTextToClipboard(" + JSON.stringify(scanText) + ")'>📋 Copy text</button>" +
+        "<pre style='white-space:pre-wrap; font-size:12px; background:#fff; padding:10px; border-radius:8px; border:1px solid #e5e5e5; margin-top:8px;'>" + escapeHtml(scanText) + "</pre>" +
+        "</div>"
       : '';
     
     panel.innerHTML = `
