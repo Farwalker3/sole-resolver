@@ -36,13 +36,11 @@ function parseMultipartBody(buffer, boundary) {
 
   for (const section of sections) {
     let part = section;
-    if (!part || part === '--
-' || part === '--') {
+    if (!part || part === '--\r\n' || part === '--') {
       continue;
     }
 
-    if (part.startsWith('
-')) {
+    if (part.startsWith('\r\n')) {
       part = part.slice(2);
     }
 
@@ -50,9 +48,7 @@ function parseMultipartBody(buffer, boundary) {
       continue;
     }
 
-    const separatorIndex = part.indexOf('
-
-');
+    const separatorIndex = part.indexOf('\r\n\r\n');
     if (separatorIndex === -1) {
       continue;
     }
@@ -60,14 +56,12 @@ function parseMultipartBody(buffer, boundary) {
     const headerText = part.slice(0, separatorIndex);
     let valueText = part.slice(separatorIndex + 4);
 
-    if (valueText.endsWith('
-')) {
+    if (valueText.endsWith('\r\n')) {
       valueText = valueText.slice(0, -2);
     }
 
     const headers = {};
-    for (const line of headerText.split('
-')) {
+    for (const line of headerText.split('\r\n')) {
       const idx = line.indexOf(':');
       if (idx > -1) {
         headers[line.slice(0, idx).trim().toLowerCase()] = line.slice(idx + 1).trim();
@@ -169,8 +163,7 @@ function buildCopyText({ extracted, resolved, rawText }) {
     lines.push(rawText.trim());
   }
 
-  return lines.join('
-').trim();
+  return lines.join('\n').trim();
 }
 
 function buildResolvedResponse({ ocrResult, resolvedResult, resolvedError }) {
