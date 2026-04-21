@@ -167,6 +167,9 @@ function processImageWithOcr(imageBase64) {
       };
     }
 
+    const copyText = data.copy_text || data.text || data.raw_text || "";
+    const displayText = data.text || copyText;
+
     return {
       success: data.success,
       sku: data.sku || null,
@@ -177,6 +180,8 @@ function processImageWithOcr(imageBase64) {
       colorway: data.resolved?.colorway || null,
       confidence: data.confidence || 0,
       rawText: data.raw_text || "",
+      copyText,
+      displayText,
       error: data.error || null
     };
   } catch (error) {
