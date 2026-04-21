@@ -13,7 +13,7 @@ export function validateSkuQuery(query) {
   }
 
   const trimmed = query.trim();
-  
+
   if (trimmed.length < 4) {
     return { valid: false, error: 'Query too short (minimum 4 characters)' };
   }
@@ -22,15 +22,26 @@ export function validateSkuQuery(query) {
     return { valid: false, error: 'Query too long (maximum 20 characters)' };
   }
 
-  if (/^[0-9]+$/.test(trimmed) && trimmed.length < 6) {
+  let allDigits = true;
+  for (const char of trimmed) {
+    if (char < '0' || char > '9') {
+      allDigits = false;
+      break;
+    }
+  }
+
+  if (allDigits && trimmed.length < 6) {
     return { valid: false, error: 'Query appears to be invalid (too few characters)' };
   }
 
-  if (/[^A-Za-z0-9-s]/.test(trimmed)) {
-    return { valid: false, error: 'Query contains invalid characters' };
+  const allowedCharacters = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789- ';
+  for (const char of trimmed) {
+    if (!allowedCharacters.includes(char)) {
+      return { valid: false, error: 'Query contains invalid characters' };
+    }
   }
 
-  const normalized = trimmed.toUpperCase().replace(/s+/g, '');
+  const normalized = trimmed.toUpperCase().split(' ').join('');
 
   return { valid: true, normalized };
 }
@@ -72,7 +83,13 @@ export function validateImageData(imageData) {
     return { valid: false, error: 'Image data is required' };
   }
 
-  const base64Data = imageData.replace(/^data:image/w+;base64,/, '');
+  let base64Data = imageData;
+  if (base64Data.startsWith('data:')) {
+    const commaIndex = base64Data.indexOf(',');
+    if (commaIndex !== -1) {
+      base64Data = base64Data.slice(commaIndex + 1);
+    }
+  }
 
   try {
     const decoded = Buffer.from(base64Data, 'base64');
