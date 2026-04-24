@@ -1,6 +1,7 @@
 import Fastify from 'fastify';
 import cors from '@fastify/cors';
 import rateLimit from '@fastify/rate-limit';
+import multipart from '@fastify/multipart';
 import fastifyStatic from '@fastify/static';
 import dotenv from 'dotenv';
 import { fileURLToPath } from 'node:url';
@@ -12,8 +13,11 @@ import { initCache } from './db/cache.js';
 
 dotenv.config();
 
+const MAX_UPLOAD_SIZE = 20971520;
+
 const fastify = Fastify({
-  logger: true  // Simple logging, no pino-pretty
+  logger: true,
+  bodyLimit: MAX_UPLOAD_SIZE
 });
 
 const publicDir = fileURLToPath(new URL('../public', import.meta.url));
@@ -23,6 +27,11 @@ await fastify.register(cors, { origin: true });
 await fastify.register(rateLimit, {
   max: 100,
   timeWindow: '1 minute'
+});
+await fastify.register(multipart, {
+  limits: {
+    fileSize: MAX_UPLOAD_SIZE
+  }
 });
 
 // Initialize cache
