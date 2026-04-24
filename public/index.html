@@ -1,0 +1,313 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Sole Resolver</title>
+
+  <style>
+    body { font-family: -apple-system, system-ui, Arial; margin: 0; padding: 16px; background: #f5f5f5; }
+    .card { border: 1px solid #ddd; border-radius: 12px; padding: 14px; margin-bottom: 12px; background: #fff; }
+    button { padding: 12px 14px; border-radius: 10px; border: 1px solid #ccc; background: #fff; width: 100%; margin: 6px 0; font-size: 16px; cursor: pointer; }
+    button:hover { background: #f0f0f0; }
+    button.primary { background: #007AFF; color: white; border: none; }
+    button.primary:hover { background: #0066DD; }
+    input, select, textarea { width: 100%; padding: 12px; border-radius: 10px; border: 1px solid #ccc; font-size: 16px; box-sizing: border-box; }
+    textarea { min-height: 110px; resize: vertical; }
+    .row { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+    .muted { color: #666; font-size: 13px; }
+    .ok { color: #0a7; }
+    .err { color: #b00; }
+    .big { font-size: 18px; font-weight: 600; }
+    .loader { display: inline-block; width: 16px; height: 16px; border: 2px solid #ccc; border-top-color: #007AFF; border-radius: 50%; animation: spin 0.8s linear infinite; margin-right: 8px; vertical-align: middle; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .confidence { display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 12px; margin-left: 8px; }
+    .confidence.high { background: #d4edda; color: #155724; }
+    .confidence.medium { background: #fff3cd; color: #856404; }
+    .confidence.low { background: #f8d7da; color: #721c24; }
+    .kv { display: grid; grid-template-columns: 120px 1fr; gap: 8px 12px; margin-top: 12px; }
+    .kv div:nth-child(odd) { color: #666; }
+    .pre { white-space: pre-wrap; font-size: 12px; background: #f9fafb; padding: 10px; border-radius: 8px; border: 1px solid #e5e5e5; margin-top: 8px; }
+  </style>
+</head>
+<body>
+
+  <div class="card">
+    <div class="big">📦 Sole Resolver</div>
+    <div class="muted">Scan a size tag, run OCR, and resolve the SKU directly from the Render app.</div>
+  </div>
+
+  <div class="card" id="statusCard">
+    <div class="muted">All requests use the local /scan, /ocr, and /resolve endpoints on the same app.</div>
+    <div id="status" class="muted" style="margin-top:10px;"></div>
+  </div>
+
+  <div class="card">
+    <button class="primary" onclick="showScanner()">📷 Scan Size Tag</button>
+    <button onclick="showManual()">✏️ Resolve Manually</button>
+  </div>
+
+  <div class="card" id="panel"></div>
+
+<script>
+  const panel = document.getElementById("panel");
+  const statusEl = document.getElementById("status");
+
+  function setStatus(msg, cls="muted") {
+    statusEl.className = cls;
+    statusEl.innerHTML = msg;
+  }
+
+  async function apiJson(path, options = {}) {
+    const response = await fetch(path, {
+      headers: {
+        'Content-Type': 'application/json',
+        ...(options.headers || {})
+      },
+      ...options
+    });
+
+    const text = await response.text();
+    let data = {};
+    if (text) {
+      try {
+        data = JSON.parse(text);
+      } catch {
+        data = { raw: text };
+      }
+    }
+
+    if (!response.ok) {
+      throw new Error(data.error || data.message || `Request failed (${response.status})`);
+    }
+
+    return data;
+  }
+
+  function toDataUrl(file) {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = e => resolve(e.target.result);
+      reader.onerror = () => reject(new Error('Could not read the image file.'));
+      reader.readAsDataURL(file);
+    });
+  }
+
+  async function copyTextToClipboard(text) {
+    try {
+      await navigator.clipboard.writeText(text);
+      setStatus("Copied text to clipboard.", "ok");
+    } catch (err) {
+      window.prompt("Copy text:", text);
+    }
+  }
+
+  function escapeHtml(s) {
+    return String(s).replace(/[&<>"']/g, m => ({
+      "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#039;"
+    }[m]));
+  }
+
+  function getConfidenceClass(conf) {
+    if (conf >= 0.8) return 'high';
+    if (conf >= 0.5) return 'medium';
+    return 'low';
+  }
+
+  function summarizeResult(result) {
+    const resolved = result && result.resolved ? result.resolved : null;
+    const name = resolved && resolved.name ? resolved.name : (result && result.sku ? result.sku : 'Unknown');
+    const brand = resolved && resolved.brand ? resolved.brand : (result && result.brand_hint ? result.brand_hint : '');
+    const confidence = result && typeof result.confidence === 'number'
+      ? `<span class="confidence ${getConfidenceClass(result.confidence)}">${Math.round(result.confidence * 100)}% confidence</span>`
+      : '';
+
+    return `${escapeHtml(brand ? brand + ' ' : '')}${escapeHtml(name)}${confidence}`;
+  }
+
+  function renderResolvedBlock(result, extra = {}) {
+    const resolved = result.resolved || {};
+    const rawText = result.copy_text || result.text || result.raw_text || '';
+    const lines = [
+      extra.sneaker ? `Entered name: ${extra.sneaker}` : null,
+      extra.usSize ? `Entered size: ${extra.usSize}` : null,
+      extra.condition ? `Condition: ${extra.condition}` : null,
+      result.sku ? `SKU: ${result.sku}` : null,
+      result.us_size ? `US Size: ${result.us_size}` : null,
+      resolved.brand ? `Brand: ${resolved.brand}` : null,
+      resolved.name ? `Name: ${resolved.name}` : null,
+      resolved.model ? `Model: ${resolved.model}` : null,
+      resolved.colorway ? `Colorway: ${resolved.colorway}` : null,
+      result.source ? `Source: ${result.source}` : null,
+      result.confidence ? `Confidence: ${Math.round(result.confidence * 100)}%` : null
+    ].filter(Boolean);
+
+    return `
+      <div class="card" style="margin-top:12px; background:#f9fafb;">
+        <div class="big">Result</div>
+        <div class="muted">${summarizeResult(result)}</div>
+        <div class="kv">
+          ${lines.map(line => {
+            const parts = String(line).split(': ');
+            const label = escapeHtml(parts.shift() || '');
+            const value = escapeHtml(parts.join(': ') || '');
+            return `<div>${label}</div><div>${value}</div>`;
+          }).join('')}
+        </div>
+        ${rawText ? `
+          <button type="button" onclick='copyTextToClipboard(${JSON.stringify(rawText)})'>📋 Copy text</button>
+          <div class="pre">${escapeHtml(rawText)}</div>
+        ` : ''}
+      </div>
+    `;
+  }
+
+  function showManual(prefill = {}, scanText = '') {
+    const confidenceHtml = prefill.confidence 
+      ? `<span class="confidence ${getConfidenceClass(prefill.confidence)}">${Math.round(prefill.confidence * 100)}% confidence</span>`
+      : '';
+
+    const scanPreviewHtml = scanText
+      ? "<div class='card' style='margin-bottom:12px; background:#f9fafb;'>" +
+        "<div class='big'>OCR Result</div>" +
+        "<button type='button' onclick='copyTextToClipboard(" + JSON.stringify(scanText) + ")'>📋 Copy text</button>" +
+        "<pre class='pre'>" + escapeHtml(scanText) + "</pre>" +
+        "</div>"
+      : '';
+
+    panel.innerHTML = `
+      ${scanPreviewHtml}
+      <div class="big">Resolve Sneaker ${confidenceHtml}</div>
+      <div class="muted" style="margin:8px 0 14px;">Enter a SKU or use the result from a scan. This calls the local /resolve endpoint.</div>
+
+      <label class="muted">Sneaker (name / colorway)</label>
+      <input id="sneaker" value="${escapeHtml(prefill.sneaker || "")}" placeholder="e.g., Nike Dunk Low Panda" />
+
+      <div class="row" style="margin-top:10px;">
+        <div>
+          <label class="muted">SKU</label>
+          <input id="sku" value="${escapeHtml(prefill.sku || "")}" placeholder="e.g., DD1391-100" />
+        </div>
+        <div>
+          <label class="muted">US Size</label>
+          <input id="usSize" value="${escapeHtml(prefill.usSize || "")}" placeholder="e.g., 10.5" />
+        </div>
+      </div>
+
+      <label class="muted" style="margin-top:10px; display:block;">Condition</label>
+      <select id="condition">
+        ${["New with box","New with no box","Used with box","Used with no box"].map(x => `
+          <option ${prefill.condition===x?"selected":""}>${x}</option>
+        `).join("")}
+      </select>
+
+      <button class="primary" onclick="resolveSku()">🔎 Resolve SKU</button>
+      <div id="manualResult" class="muted" style="margin-top:10px;"></div>
+    `;
+  }
+
+  function showScanner() {
+    panel.innerHTML = `
+      <div class="big">📷 Scan Size Tag</div>
+      <div class="muted" style="margin:8px 0 14px;">
+        Take a clear photo of the inside size tag. The app will call /scan and return OCR plus the resolved sneaker data.
+      </div>
+      <input id="photo" type="file" accept="image/*" capture="environment" />
+      <div class="row">
+        <button class="primary" onclick="runScan('/scan')">🔍 Scan Image</button>
+        <button onclick="runScan('/ocr')">📝 OCR Only</button>
+      </div>
+      <div id="scanOut" class="muted" style="margin-top:10px;"></div>
+    `;
+  }
+
+  async function runScan(endpoint) {
+    const file = document.getElementById("photo").files[0];
+    if (!file) return setStatus("Choose a photo first.", "err");
+
+    setStatus('<span class="loader"></span> Processing image…', "muted");
+    document.getElementById("scanOut").innerHTML = "Uploading and analyzing…";
+
+    try {
+      const base64 = await toDataUrl(file);
+      const result = await apiJson(endpoint, {
+        method: 'POST',
+        body: JSON.stringify({ image: base64 })
+      });
+
+      const displayName = result.sku || (result.resolved && result.resolved.name) || 'OCR text';
+      const confidenceText = typeof result.confidence === 'number' ? `Confidence: ${Math.round(result.confidence * 100)}%` : '';
+
+      setStatus(`✓ Found: ${escapeHtml(displayName)}${confidenceText ? ' · ' + confidenceText : ''}`, "ok");
+
+      document.getElementById("scanOut").innerHTML = renderResolvedBlock(result, {
+        sneaker: result.resolved && result.resolved.name ? result.resolved.name : '',
+        usSize: result.us_size || '',
+        condition: ''
+      });
+
+      showManual({
+        sneaker: result.resolved && result.resolved.name ? result.resolved.name : '',
+        sku: result.sku || '',
+        usSize: result.us_size || '',
+        confidence: result.confidence,
+        condition: ''
+      }, result.copy_text || result.text || result.raw_text || '');
+    } catch (err) {
+      setStatus(`Error: ${err.message || err}`, "err");
+      document.getElementById("scanOut").innerHTML = "Scan failed. Try manual entry.";
+    }
+  }
+
+  async function resolveSku() {
+    const sneaker = document.getElementById("sneaker").value.trim();
+    const sku = document.getElementById("sku").value.trim();
+    const usSize = document.getElementById("usSize").value.trim();
+    const condition = document.getElementById("condition").value;
+    const resultEl = document.getElementById("manualResult");
+
+    if (!sku) return setStatus("Enter a SKU first.", "err");
+
+    setStatus('<span class="loader"></span> Resolving SKU…', "muted");
+    resultEl.innerHTML = '<span class="loader"></span> Looking up the SKU…';
+
+    try {
+      const result = await apiJson('/resolve', {
+        method: 'POST',
+        body: JSON.stringify({ query: sku })
+      });
+
+      if (!result.success || !result.resolved) {
+        const message = result.error || 'No match found';
+        setStatus(`No match for ${sku}`, "err");
+        resultEl.innerHTML = `<div class="err">${escapeHtml(message)}</div>`;
+        return;
+      }
+
+      setStatus(`✓ Resolved ${sku}`, "ok");
+      resultEl.innerHTML = renderResolvedBlock({
+        ...result,
+        sku,
+        copy_text: result.copy_text || result.text || ''
+      }, {
+        sneaker,
+        usSize,
+        condition
+      });
+    } catch (err) {
+      setStatus(`Error: ${err.message || err}`, "err");
+      resultEl.innerHTML = `<div class="err">${escapeHtml(err.message || String(err))}</div>`;
+    }
+  }
+
+  (async () => {
+    try {
+      const status = await apiJson('/health', { method: 'GET', headers: {} });
+      setStatus(`Ready! ${escapeHtml(status.service || 'sole-resolver')} is online.`, "ok");
+    } catch {
+      setStatus('Ready! If the API is unavailable, check the Render deployment.', 'muted');
+    }
+  })();
+</script>
+</body>
+</html>

@@ -1,7 +1,9 @@
 import Fastify from 'fastify';
 import cors from '@fastify/cors';
 import rateLimit from '@fastify/rate-limit';
+import fastifyStatic from '@fastify/static';
 import dotenv from 'dotenv';
+import { fileURLToPath } from 'node:url';
 
 import healthRoutes from './routes/health.js';
 import resolveRoutes from './routes/resolve.js';
@@ -13,6 +15,8 @@ dotenv.config();
 const fastify = Fastify({
   logger: true  // Simple logging, no pino-pretty
 });
+
+const publicDir = fileURLToPath(new URL('../public', import.meta.url));
 
 // Plugins
 await fastify.register(cors, { origin: true });
@@ -28,6 +32,13 @@ initCache();
 await fastify.register(healthRoutes);
 await fastify.register(resolveRoutes);
 await fastify.register(ocrRoutes);
+
+// Static frontend
+await fastify.register(fastifyStatic, {
+  root: publicDir,
+  prefix: '/',
+  index: ['index.html']
+});
 
 // Error handler
 fastify.setErrorHandler((error, request, reply) => {
