@@ -213,16 +213,19 @@
         Take a clear photo of the inside size tag. The app will call /scan and return OCR plus the resolved sneaker data.
       </div>
       <input id="photo" type="file" accept="image/*" />
+      <input id="photoCamera" type="file" accept="image/*" capture="environment" style="display:none" onchange="runScan('/scan', 'photoCamera')" />
       <div class="row">
-        <button class="primary" onclick="runScan('/scan')">🔍 Scan Image</button>
-        <button onclick="runScan('/ocr')">📝 OCR Only</button>
+        <button class="primary" onclick="runScan('/scan', 'photo')">🔍 Scan Image</button>
+        <button onclick="document.getElementById('photoCamera').click()">📷 Use Camera</button>
       </div>
+      <button onclick="runScan('/ocr', 'photo')">📝 OCR Only</button>
       <div id="scanOut" class="muted" style="margin-top:10px;"></div>
     `;
   }
 
-  async function runScan(endpoint) {
-    const file = document.getElementById("photo").files[0];
+  async function runScan(endpoint, inputId = 'photo') {
+    const fileInput = document.getElementById(inputId);
+    const file = fileInput && fileInput.files ? fileInput.files[0] : null;
     if (!file) return setStatus("Choose a photo first.", "err");
 
     setStatus('<span class="loader"></span> Processing image…', "muted");
