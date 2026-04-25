@@ -43,6 +43,12 @@
   </div>
 
   <div class="card">
+    <div class="big">Target Spreadsheet</div>
+    <div class="muted">Paste a spreadsheet ID or Google Sheets URL. It is saved locally on this device.</div>
+    <input id="spreadsheetIdInput" type="text" placeholder="Spreadsheet ID or URL" style="margin-top:10px;" />
+  </div>
+
+  <div class="card">
     <button class="primary" onclick="showScanner()">📷 Scan Size Tag</button>
     <button onclick="showManual()">✏️ Resolve Manually</button>
   </div>
@@ -93,6 +99,59 @@
     });
   }
 
+  const SPREADSHEET_STORAGE_KEY = 'soleResolverSpreadsheetId';
+
+  function normalizeSpreadsheetId(value) {
+    const raw = String(value || '').trim();
+    if (!raw) return '';
+
+    const urlMatch = raw.match(/\/spreadsheets\/d\/([a-zA-Z0-9-_]+)/i);
+    if (urlMatch && urlMatch[1]) {
+      return urlMatch[1];
+    }
+
+    return raw;
+  }
+
+  function getStoredSpreadsheetTarget() {
+    try {
+      return localStorage.getItem(SPREADSHEET_STORAGE_KEY) || '';
+    } catch {
+      return '';
+    }
+  }
+
+  function setStoredSpreadsheetTarget(value) {
+    try {
+      localStorage.setItem(SPREADSHEET_STORAGE_KEY, String(value || '').trim());
+    } catch {
+      // ignore storage failures
+    }
+  }
+
+  function getSpreadsheetTargetValue() {
+    const input = document.getElementById('spreadsheetIdInput');
+    if (input && typeof input.value === 'string' && input.value.trim()) {
+      return input.value.trim();
+    }
+
+    return getStoredSpreadsheetTarget();
+  }
+
+  function initSpreadsheetTarget() {
+    const input = document.getElementById('spreadsheetIdInput');
+    if (!input) return;
+
+    const saved = getStoredSpreadsheetTarget();
+    if (saved) {
+      input.value = saved;
+    }
+
+    input.addEventListener('input', () => {
+      setStoredSpreadsheetTarget(input.value);
+    });
+  }
+
   async function copyTextToClipboard(text) {
     try {
       await navigator.clipboard.writeText(text);
@@ -122,18 +181,29 @@
   }
 
   async function sendResultToSheet(payload) {
+    const spreadsheetId = normalizeSpreadsheetId(getSpreadsheetTargetValue());
+    const requestBody = {
+      ...payload
+    };
+
+    if (spreadsheetId) {
+      requestBody.spreadsheetId = spreadsheetId;
+    }
+
     setStatus('<span class="loader"></span> Sending to Google Sheets…', "muted");
 
     try {
       const result = await apiJson('/export', {
         method: 'POST',
-        body: JSON.stringify(payload)
+        body: JSON.stringify(requestBody)
       });
 
-      setStatus(`✓ Sent to ${escapeHtml(result.sheet || 'Google Sheets')}.`, "ok");
+      const sheetLabel = result.sheet || 'Google Sheets';
+      const spreadsheetLabel = result.spreadsheetId ? ' (' + result.spreadsheetId + ')' : '';
+      setStatus('✓ Sent to ' + escapeHtml(sheetLabel) + escapeHtml(spreadsheetLabel) + '.', "ok");
       return result;
     } catch (err) {
-      setStatus(`Error: ${err.message || err}`, "err");
+      setStatus('Error: ' + (err.message || err), "err");
       throw err;
     }
   }
@@ -341,6 +411,8 @@
       resultEl.innerHTML = `<div class="err">${escapeHtml(err.message || String(err))}</div>`;
     }
   }
+
+  initSpreadsheetTarget();
 
   (async () => {
     try {
