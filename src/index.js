@@ -5,6 +5,7 @@ import multipart from '@fastify/multipart';
 import fastifyStatic from '@fastify/static';
 import dotenv from 'dotenv';
 import { fileURLToPath } from 'node:url';
+import fs from 'node:fs';
 import { GoogleSpreadsheet } from 'google-spreadsheet';
 
 import healthRoutes from './routes/health.js';
@@ -38,70 +39,98 @@ const fastify = Fastify({
 });
 
 const publicDir = fileURLToPath(new URL('../public', import.meta.url));
-let googleDocPromise = null;
+const googleDocCache = new Map();
+let cachedGoogleCredentials = null;
+let cachedGoogleCredentialsSource = null;
+
+function normalizeSpreadsheetId(value) {
+  const raw = String(value || '').trim();
+  if (!raw) return '';
+
+  const urlMatch = raw.match(/\/spreadsheets\/d\/([a-zA-Z0-9-_]+)/i);
+  if (urlMatch && urlMatch[1]) {
+    return urlMatch[1];
+  }
+
+  return raw;
+}
 
 function buildMissingGoogleSheetsError() {
-  const missing = [];
-  if (!String(process.env.GOOGLE_SHEET_ID || '').trim()) {
-    missing.push('GOOGLE_SHEET_ID');
-  }
-  if (!String(process.env.GOOGLE_CREDENTIALS_BASE64 || '').trim()) {
-    missing.push('GOOGLE_CREDENTIALS_BASE64');
-  }
-
-  const error = new Error(
-    missing.length
-      ? `Google Sheets export is not configured. Set ${missing.join(' and ')}.`
-      : 'Google Sheets export is not configured.'
-  );
+  const error = new Error('Google Sheets export is not configured. Set GOOGLE_SHEET_ID or provide spreadsheetId in the request body, and configure GOOGLE_CREDENTIALS_BASE64 or GOOGLE_APPLICATION_CREDENTIALS.');
   error.statusCode = 503;
   return error;
 }
 
-function getGoogleCredentials() {
-  const sheetId = String(process.env.GOOGLE_SHEET_ID || '').trim();
-  const credentialsBase64 = String(process.env.GOOGLE_CREDENTIALS_BASE64 || '').trim();
+function loadGoogleCredentials() {
+  const base64Credentials = String(process.env.GOOGLE_CREDENTIALS_BASE64 || '').trim();
+  const credentialsPath = String(process.env.GOOGLE_APPLICATION_CREDENTIALS || '').trim();
+  const source = base64Credentials || credentialsPath;
 
-  if (!sheetId || !credentialsBase64) {
+  if (!source) {
     throw buildMissingGoogleSheetsError();
   }
 
-  let credentialsJson;
-  try {
-    credentialsJson = Buffer.from(credentialsBase64, 'base64').toString('utf8');
-  } catch {
-    const error = new Error('GOOGLE_CREDENTIALS_BASE64 is not valid base64.');
-    error.statusCode = 503;
-    throw error;
+  if (cachedGoogleCredentials && cachedGoogleCredentialsSource === source) {
+    return cachedGoogleCredentials;
+  }
+
+  let raw = '';
+  if (base64Credentials) {
+    raw = Buffer.from(base64Credentials, 'base64').toString('utf8');
+  } else if (credentialsPath) {
+    raw = fs.readFileSync(credentialsPath, 'utf8');
   }
 
   let credentials;
   try {
-    credentials = JSON.parse(credentialsJson);
+    credentials = JSON.parse(raw);
   } catch {
-    const error = new Error('GOOGLE_CREDENTIALS_BASE64 did not decode to valid JSON credentials.');
+    const error = new Error('Google credentials could not be parsed as JSON.');
     error.statusCode = 503;
     throw error;
   }
 
-  return { sheetId, credentials };
+  if (!credentials || !credentials.client_email || !credentials.private_key) {
+    const error = new Error('Google credentials must include client_email and private_key.');
+    error.statusCode = 503;
+    throw error;
+  }
+
+  cachedGoogleCredentials = credentials;
+  cachedGoogleCredentialsSource = source;
+  return cachedGoogleCredentials;
 }
 
-async function getGoogleDoc() {
-  if (!googleDocPromise) {
-    googleDocPromise = (async () => {
-      const { sheetId, credentials } = getGoogleCredentials();
-      const doc = new GoogleSpreadsheet(sheetId);
+function resolveSpreadsheetId(body = {}) {
+  return normalizeSpreadsheetId(
+    body.spreadsheetId ||
+    body.targetSpreadsheetId ||
+    body.sheetId ||
+    process.env.GOOGLE_SHEET_ID ||
+    ''
+  );
+}
+
+async function getGoogleDoc(spreadsheetId) {
+  const normalizedSpreadsheetId = normalizeSpreadsheetId(spreadsheetId);
+  if (!normalizedSpreadsheetId) {
+    throw buildMissingGoogleSheetsError();
+  }
+
+  if (!googleDocCache.has(normalizedSpreadsheetId)) {
+    googleDocCache.set(normalizedSpreadsheetId, (async () => {
+      const credentials = loadGoogleCredentials();
+      const doc = new GoogleSpreadsheet(normalizedSpreadsheetId);
       await doc.useServiceAccountAuth(credentials);
       await doc.loadInfo();
       return doc;
     })().catch(error => {
-      googleDocPromise = null;
+      googleDocCache.delete(normalizedSpreadsheetId);
       throw error;
-    });
+    }));
   }
 
-  return googleDocPromise;
+  return googleDocCache.get(normalizedSpreadsheetId);
 }
 
 function normalizeExportRow(body = {}) {
@@ -125,8 +154,8 @@ function normalizeExportRow(body = {}) {
   };
 }
 
-async function appendExportRow(row) {
-  const doc = await getGoogleDoc();
+async function appendExportRow(row, spreadsheetId) {
+  const doc = await getGoogleDoc(spreadsheetId);
   let sheet = doc.sheetsByTitle[EXPORT_SHEET_TITLE];
 
   if (!sheet) {
@@ -139,7 +168,7 @@ async function appendExportRow(row) {
   }
 
   await sheet.addRow(row);
-  return { sheetTitle: sheet.title };
+  return { sheetTitle: sheet.title, spreadsheetId: normalizedSpreadsheetId }; 
 }
 
 // Plugins
@@ -164,13 +193,21 @@ await fastify.register(ocrRoutes);
 
 fastify.post('/export', async (request, reply) => {
   try {
-    const row = normalizeExportRow(request.body || {});
-    const result = await appendExportRow(row);
+    const body = request.body && typeof request.body === 'object' ? request.body : {};
+    const spreadsheetId = resolveSpreadsheetId(body);
+
+    if (!spreadsheetId) {
+      throw buildMissingGoogleSheetsError();
+    }
+
+    const row = normalizeExportRow(body);
+    const result = await appendExportRow(row, spreadsheetId);
 
     return reply.send({
       success: true,
       message: 'Exported sneaker data to Google Sheets.',
       sheet: result.sheetTitle,
+      spreadsheetId: result.spreadsheetId,
       row
     });
   } catch (error) {
